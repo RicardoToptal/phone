@@ -43,13 +43,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve the browser UI
+// Serve the browser UI and the vendored Twilio SDK (public/vendor/twilio.min.js,
+// produced by the "build" script). Static files only — works locally and on Vercel.
 app.use(express.static(path.join(__dirname, 'public')));
-// Serve the Twilio Voice SDK straight from node_modules (UMD build)
-app.use(
-  '/vendor',
-  express.static(path.join(__dirname, 'node_modules', '@twilio', 'voice-sdk', 'dist'))
-);
 
 // Expose the identity the browser should register with.
 app.get('/config', (req, res) => {
@@ -166,9 +162,15 @@ app.post('/dial-status', (req, res) => {
   res.type('text/xml').send(response.toString());
 });
 
-app.listen(PORT, () => {
-  console.log(`\n  Browser phone running:  http://localhost:${PORT}`);
-  console.log(`  Client identity:        ${CLIENT_IDENTITY}`);
-  console.log(`\n  Next: expose it with  ngrok http ${PORT}`);
-  console.log(`  Then set your Twilio number's Voice webhook to  https://<ngrok-url>/voice  (POST)\n`);
-});
+// Run a real HTTP server only when started directly (local dev).
+// On Vercel the file is imported and the Express app is used as the handler.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`\n  Browser phone running:  http://localhost:${PORT}`);
+    console.log(`  Client identity:        ${CLIENT_IDENTITY}`);
+    console.log(`\n  Next: expose it with  ngrok http ${PORT}`);
+    console.log(`  Then set your Twilio number's Voice webhook to  https://<ngrok-url>/voice  (POST)\n`);
+  });
+}
+
+module.exports = app;

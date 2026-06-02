@@ -5,6 +5,10 @@
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
+    "build": "mkdir -p public/vendor && cp node_modules/@twilio/voice-sdk/dist/twilio.min.js public/vendor/twilio.min.js",
+    "vercel-build": "npm run build",
+    "prestart": "npm run build",
+    "predev": "npm run build",
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
