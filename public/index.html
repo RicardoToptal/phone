@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Browser Phone</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      margin: 0; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      background: #0f172a; color: #e2e8f0;
+    }
+    .card {
+      width: 360px; padding: 28px; border-radius: 16px;
+      background: #1e293b; box-shadow: 0 10px 40px rgba(0,0,0,.4);
+    }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    .status { font-size: 13px; color: #94a3b8; margin-bottom: 20px; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+           background: #64748b; margin-right: 6px; vertical-align: middle; }
+    .dot.ready { background: #22c55e; }
+    .dot.busy { background: #f59e0b; }
+    .dot.error { background: #ef4444; }
+    .caller { font-size: 15px; margin: 14px 0; min-height: 22px; color: #cbd5e1; }
+    .row { display: flex; gap: 10px; margin-top: 14px; }
+    button {
+      flex: 1; padding: 13px; border: 0; border-radius: 10px;
+      font-size: 15px; font-weight: 600; cursor: pointer; color: #fff;
+    }
+    button:disabled { opacity: .35; cursor: not-allowed; }
+    .accept { background: #22c55e; }
+    .hangup { background: #ef4444; }
+    .dial { background: #3b82f6; }
+    .dialer { display: flex; gap: 8px; margin-top: 20px; }
+    input {
+      flex: 1; padding: 12px; border-radius: 10px; border: 1px solid #334155;
+      background: #0f172a; color: #e2e8f0; font-size: 15px;
+    }
+    .log { margin-top: 18px; font-size: 12px; color: #64748b; max-height: 120px;
+           overflow:auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>📞 Browser Phone</h1>
+    <div class="status"><span id="dot" class="dot"></span><span id="statusText">Connecting…</span></div>
+
+    <div class="caller" id="caller">Click “Go Online” to start receiving calls</div>
+
+    <div class="row">
+      <button class="dial" id="online">Go Online</button>
+    </div>
+
+    <div class="row">
+      <button class="accept" id="accept" disabled>Answer</button>
+      <button class="hangup" id="hangup" disabled>Hang up</button>
+    </div>
+
+    <div class="row">
+      <button class="dial" id="test" disabled>📞 Ring my browser (test, ~5s)</button>
+    </div>
+
+    <div class="dialer">
+      <input id="number" type="tel" placeholder="+1… (to place a call)" />
+      <button class="dial" id="dial" style="flex:0 0 90px" disabled>Call</button>
+    </div>
+
+    <div class="log" id="log"></div>
+  </div>
+
+  <script src="/vendor/twilio.min.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const log = (m) => { $('log').textContent = `${new Date().toLocaleTimeString()}  ${m}\n` + $('log').textContent; };
+    const setStatus = (text, cls) => { $('statusText').textContent = text; $('dot').className = 'dot ' + (cls || ''); };
+
+    let device;
+    let activeCall = null;
+
+    function wireCall(call) {
+      activeCall = call;
+      $('hangup').disabled = false;
+      call.on('accept', () => { setStatus('On a call', 'busy'); $('accept').disabled = true; log('Call connected'); });
+      call.on('disconnect', () => { clearCall(); log('Call ended'); });
+      call.on('cancel', () => { clearCall(); log('Call canceled'); });
+      call.on('reject', () => { clearCall(); log('Call rejected'); });
+      call.on('error', (e) => { log('Call error: ' + e.message); clearCall(); });
+    }
+
+    function clearCall() {
+      activeCall = null;
+      $('caller').textContent = 'No active call';
+      $('accept').disabled = true;
+      $('hangup').disabled = true;
+      $('dial').disabled = !device;
+      setStatus('Ready — waiting for calls', 'ready');
+    }
+
+    async function init() {
+      try {
+        // Chrome blocks audio until a user gesture. This runs from the
+        // "Go Online" click, so request the mic now to unlock the AudioContext.
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        const { token, identity } = await (await fetch('/token')).json();
+        device = new Twilio.Device(token, { codecPreferences: ['opus', 'pcmu'] });
+
+        device.on('registered', () => {
+          setStatus(`Ready as "${identity}" — waiting for calls`, 'ready');
+          $('dial').disabled = false;
+          $('test').disabled = false;
+          $('online').style.display = 'none';
+          $('caller').textContent = 'No active call';
+          log('Online — registered with Twilio');
+        });
+        device.on('error', (e) => { setStatus('Error: ' + e.message, 'error'); log('Device error: ' + e.message); });
+        device.on('tokenWillExpire', async () => {
+          const { token } = await (await fetch('/token')).json();
+          device.updateToken(token);
+          log('Token refreshed');
+        });
+
+        // Incoming call
+        device.on('incoming', (call) => {
+          const from = call.parameters.From || 'Unknown';
+          $('caller').textContent = '📲 Incoming: ' + from;
+          setStatus('Incoming call…', 'busy');
+          $('accept').disabled = false;
+          log('Incoming from ' + from);
+          wireCall(call);
+          $('accept').onclick = () => call.accept();
+        });
+
+        await device.register();
+      } catch (e) {
+        setStatus('Setup failed: ' + e.message, 'error');
+        log(e.message);
+        $('online').disabled = false;
+        $('online').textContent = 'Retry Go Online';
+      }
+    }
+
+    $('online').onclick = () => {
+      $('online').disabled = true;
+      setStatus('Connecting…', '');
+      init();
+    };
+
+    $('hangup').onclick = () => { if (activeCall) activeCall.disconnect(); };
+
+    $('test').onclick = async () => {
+      $('test').disabled = true;
+      for (let s = 5; s > 0; s--) {
+        $('test').textContent = `Ringing you in ${s}…`;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      $('test').textContent = '📞 Ring my browser (test, ~5s)';
+      log('Asking Twilio to ring this browser…');
+      try {
+        const r = await (await fetch('/simulate-call', { method: 'POST' })).json();
+        if (!r.ok) throw new Error(r.error);
+        log('Test call placed (' + r.sid + ') — should ring now');
+      } catch (e) {
+        log('Test call failed: ' + e.message);
+        setStatus('Test call failed: ' + e.message, 'error');
+      }
+      $('test').disabled = false;
+    };
+
+    $('dial').onclick = async () => {
+      const number = $('number').value.trim();
+      if (!number || !device) return;
+      setStatus('Calling ' + number + '…', 'busy');
+      $('caller').textContent = '📞 Calling ' + number;
+      const call = await device.connect({ params: { To: number } });
+      wireCall(call);
+    };
+
+    // Wait for "Go Online" — Chrome won't allow audio without a user gesture.
+    setStatus('Offline — click “Go Online”', '');
+  </script>
+</body>
+</html>
