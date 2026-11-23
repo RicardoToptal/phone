@@ -162,6 +162,47 @@ app.post('/dial-status', (req, res) => {
   res.type('text/xml').send(response.toString());
 });
 
+// TEST HARNESS: point the number's Voice webhook at /outcome/<mode> to make
+// an inbound call end a chosen way, e.g. to check how a dialer classifies it.
+//   ring       rings the browser client for 60s without answering the caller
+//              (answerOnBridge keeps the caller's leg unanswered while it rings)
+//   voicemail  rings 20s, then answers with a greeting and records a message
+//   busy       refuses with busy (SIP 486)
+//   reject     refuses as rejected (SIP 603)
+app.post('/outcome/:mode', (req, res) => {
+  const response = new VoiceResponse();
+  const { mode } = req.params;
+  console.log(`  outcome mode: ${mode}`);
+  if (mode === 'busy') {
+    response.reject({ reason: 'busy' });
+  } else if (mode === 'reject') {
+    response.reject({ reason: 'rejected' });
+  } else if (mode === 'ring' || mode === 'voicemail') {
+    const options = { answerOnBridge: true, timeout: mode === 'ring' ? 60 : 20 };
+    if (mode === 'voicemail') {
+      options.action = '/outcome-voicemail';
+      options.method = 'POST';
+    }
+    response.dial(options).client(CLIENT_IDENTITY);
+  } else {
+    response.say({ voice: 'alice' }, `Unknown test mode ${mode}. Goodbye.`);
+  }
+  res.type('text/xml').send(response.toString());
+});
+
+// Voicemail for /outcome/voicemail, once the ring times out unanswered.
+app.post('/outcome-voicemail', (req, res) => {
+  const response = new VoiceResponse();
+  if (req.body.DialCallStatus !== 'completed') {
+    response.say(
+      { voice: 'alice' },
+      'Hi, you have reached the test voicemail. Please leave a message after the tone.'
+    );
+    response.record({ maxLength: 30, playBeep: true });
+  }
+  res.type('text/xml').send(response.toString());
+});
+
 // Run a real HTTP server only when started directly (local dev).
 // On Vercel the file is imported and the Express app is used as the handler.
 if (require.main === module) {
